@@ -1,0 +1,438 @@
+import tkinter as tk
+from tkinter import filedialog, messagebox
+import cv2
+import numpy as np
+from PIL import Image, ImageEnhance, ImageTk, ImageDraw  # Import ImageDraw
+
+class ButtonManager:
+    def __init__(self, parent):
+        self.parent = parent
+        self.buttons = {}
+
+    def create_button(self, text, command, **kwargs):
+        # Replace spaces with underscores in the text
+        button = tk.Button(self.parent, text=text, command=command, **kwargs)
+        self.buttons[text] = button
+        return button
+
+class ImageCropper:
+    def __init__(self, root, button_manager):
+        self.root = root
+        self.root.title("EL/PL Analyzer")
+        self.image_width = 1200
+        self.image_height = 800
+        self.root.geometry(f"{self.image_width}x{self.image_height}")
+
+        self.button_frame = tk.Frame(self.root)
+        self.button_frame.pack(side=tk.TOP, fill=tk.X)
+
+        button_manager = ButtonManager(self.button_frame)  # Pass the button_frame as the parent
+        # Create buttons
+        self.load_button = button_manager.create_button("Load Image", self.load_image)
+        self.load_button.pack(side=tk.LEFT)
+
+        self.crop_button = button_manager.create_button("Crop Image", self.start_crop, state=tk.DISABLED)
+        self.crop_button.pack(side=tk.LEFT)
+
+        self.finished_button = button_manager.create_button("Finish Cropping", self.finish_crop, state=tk.DISABLED)
+        self.finished_button.pack(side=tk.LEFT)
+
+        self.reset_button = button_manager.create_button("Reset Image to Original", self.reset_image, state=tk.DISABLED)
+        self.reset_button.pack(side=tk.LEFT)
+
+        self.canvas = tk.Canvas(self.root, width=self.image_width, height=self.image_height)
+        self.canvas.pack()        
+
+        self.image = None
+        self.cropped_image = None
+        self.original_image = None
+        self.photo = None
+        self.crop_shape = []  # List to store the coordinates of the shape
+        self.cropping = False
+        self.prev_point = None
+
+    def load_image(self):
+        file_path = filedialog.askopenfilename(filetypes=[("Image files", "*.jpg *.jpeg *.png *.bmp *.gif *.ppm *.pgm")])
+        if file_path:
+            self.image = Image.open(file_path)
+            self.reset_button.config(state=tk.NORMAL)
+            self.original_image = self.image.copy()
+            #self.enhancement_button.config(state=tk.NORMAL)
+            self.crop_button.config(state=tk.NORMAL)
+            self.update_image(self.image)
+
+    def start_crop(self):
+        self.finished_button.config(state=tk.NORMAL)
+        self.crop_button.config(state=tk.DISABLED)
+        self.reset_button.config(state=tk.DISABLED)
+        #self.image_enhancer.enhancement_button.config(state=tk.DISABLED)
+        self.cropping = True
+        self.prev_point = None
+        self.crop_shape = []  # Clear the crop coordinates
+        self.canvas.delete("shape")
+
+    def finish_crop(self):
+        if self.cropping:
+            confirmation = messagebox.askyesno("Finish Cropping", "Do you want to finish cropping the image?")
+            if confirmation:
+                self.cropping = False
+                self.finished_button.config(state=tk.DISABLED)
+                self.crop_button.config(state=tk.NORMAL)
+                self.reset_button.config(state=tk.NORMAL)
+                #self.image_enhancer.enhancement_button.config(state=tk.NORMAL)
+                self.prev_point = None
+                self.draw_cropped_shape()
+                self.update_cropped_image()
+
+    def on_canvas_click(self, event=None):
+        #self.image_enhancer.enhancement_button.config(state=tk.DISABLED)
+        self.reset_button.config(state=tk.DISABLED)
+        if self.cropping:
+            if not self.crop_shape:
+                self.crop_shape = [event.x, event.y, event.x, event.y]
+            else:
+                self.crop_shape[2] = event.x
+                self.crop_shape[3] = event.y
+                self.draw_cropped_shape()
+
+    def on_canvas_drag(self, event=None):
+        #self.image_enhancer.enhancement_button.config(state=tk.DISABLED)
+        self.reset_button.config(state=tk.DISABLED)
+        if self.cropping:
+            if self.crop_shape:
+                self.crop_shape[2] = event.x
+                self.crop_shape[3] = event.y
+                self.draw_cropped_shape()
+
+    def draw_cropped_shape(self):
+        # Remove the previous rectangle
+        self.canvas.delete("shape")
+
+        if len(self.crop_shape) == 4:
+            x1, y1, x2, y2 = self.crop_shape
+            self.drawing_shape = self.canvas.create_rectangle(x1, y1, x2, y2, outline="red", tags="shape")
+
+    def resize_image(self, image, width, height):
+        img_width, img_height = image.size
+        aspect_ratio = img_width / img_height
+        new_width = width
+        new_height = int(width / aspect_ratio)
+
+        if new_height > height:
+            new_height = height
+            new_width = int(height * aspect_ratio)
+
+        resized_image = image.resize((new_width, new_height), resample=Image.LANCZOS)
+        return resized_image
+
+    def reset_image(self):
+        self.crop_shape = []
+        self.image = self.original_image
+        self.cropped_image = None
+        self.canvas.delete("all")
+        self.update_image(self.image)
+
+    def update_image(self, image):
+        if image:
+            if self.cropped_image:
+                self.image = self.cropped_image
+            else:
+                self.image = image  # If not cropped, use the provided image
+
+            if self.image:
+                self.image = self.resize_image(self.image, self.image_width, self.image_height)
+                self.photo = ImageTk.PhotoImage(image=self.image)
+                self.canvas.create_image(0, 0, anchor=tk.NW, image=self.photo)
+            else:
+                self.canvas.delete("all")
+            self.cropping = False
+
+    def update_cropped_image(self):
+        self.canvas.delete("all")
+        if self.crop_shape:
+            x1, y1, x2, y2 = self.crop_shape
+            self.image = self.image.crop((x1, y1, x2, y2))
+            self.update_image(self.image)
+
+class ImageEnhancer:
+    def __init__(self, root, image_cropper, button_manager):
+        self.root = root
+        self.image_cropper = image_cropper
+        self.original_image = None  # Store the original unaltered image
+        self.unedited_image = None
+        self.keypoints = []  # List to store detected keypoints
+        self.keypoints_to_remove = []
+        self.blob_selection_started = False
+        self.image_before_blobs = None
+
+        button_manager = ButtonManager(image_cropper.button_frame)
+        # Create buttons
+        self.enhancement_button = button_manager.create_button("Enhance Image", self.open_enhancement_window)
+        self.enhancement_button.pack(side=tk.LEFT)
+
+        # Variables for enhancement sliders
+        self.brightness_scale_var = tk.DoubleVar()
+        self.brightness_scale_var.set(50)
+
+        self.contrast_scale_var = tk.DoubleVar()
+        self.contrast_scale_var.set(50)
+
+        self.sharpness_scale_var = tk.DoubleVar()
+        self.sharpness_scale_var.set(50)
+
+    def open_enhancement_window(self):
+        enhancement_window = tk.Toplevel(self.root)
+        enhancement_window.geometry("300x400")
+        enhancement_window.title("Image Enhancements")
+        self.unedited_image = self.image_cropper.image.copy()
+        self.working_image = None
+
+
+        # Brightness slider
+        brightness_label = tk.Label(enhancement_window, text="Brightness")
+        brightness_label.pack()
+        brightness_slider = tk.Scale(enhancement_window, from_=1, to=100, resolution=1, length=150, orient=tk.HORIZONTAL, variable=self.brightness_scale_var)
+        brightness_slider.pack()
+
+        # Contrast slider
+        contrast_label = tk.Label(enhancement_window, text="Contrast")
+        contrast_label.pack()
+        contrast_slider = tk.Scale(enhancement_window, from_=1, to=100, resolution=1, length=150, orient=tk.HORIZONTAL, variable=self.contrast_scale_var)
+        contrast_slider.pack()
+
+        # Sharpness slider
+        sharpness_label = tk.Label(enhancement_window, text="Sharpness")
+        sharpness_label.pack()
+        sharpness_slider = tk.Scale(enhancement_window, from_=1, to=100, resolution=1, length=150, orient=tk.HORIZONTAL, variable=self.sharpness_scale_var)
+        sharpness_slider.pack()                
+        
+        apply_button = tk.Button(enhancement_window, text="Apply Enhancements", command=self.apply_enhancements)
+        apply_button.pack()
+        
+        detect_blobs_button = tk.Button(enhancement_window, text="Detect Blobs", command=self.detect_blobs_button_clicked)
+        detect_blobs_button.pack()
+        
+        remove_blobs_button = tk.Button(enhancement_window, text="Remove Blobs", command=self.remove_blobs_button_clicked)
+        remove_blobs_button.pack()
+    
+        apply_histogram_button = tk.Button(enhancement_window, text="Apply Histogram", command=self.apply_histogram)
+        apply_histogram_button.pack()
+                
+        reset_button = tk.Button(enhancement_window, text="Remove All Enhancements", command=self.reset_image)
+        reset_button.pack()
+
+    def apply_enhancements(self):
+        if self.image_cropper.image:
+            print("Applying enhancements")
+            image = self.image_cropper.image.copy()  # Use the displayed image as the base
+
+            # Apply enhancements based on the user-selected factors
+            brightness_factor = (self.brightness_scale_var.get() - 50) / 50
+            contrast_factor = (self.contrast_scale_var.get() - 50) / 50
+            sharpness_factor = (self.sharpness_scale_var.get() - 50) / 50
+
+            # Apply enhancements to the displayed image
+            image = ImageEnhance.Brightness(image).enhance(1 + brightness_factor)
+            image = ImageEnhance.Contrast(image).enhance(1 + contrast_factor)
+            image = ImageEnhance.Sharpness(image).enhance(1 + sharpness_factor)
+
+            self.image_cropper.image = image  # Update the displayed image
+            self.image_cropper.update_image(image)
+        else:
+            print("No image available for enhancements")
+
+    def reset_image(self):
+        if self.image_cropper.image:
+            self.image_cropper.image = self.unedited_image.copy()  # Restore to the unedited image
+            self.image_cropper.update_image(self.image_cropper.image)
+
+    def apply_histogram(self):
+        cv2_image = np.array(self.image_cropper.image)
+        cv2_image = cv2_image[:, :, ::-1].copy()  # Convert from RGB to BGR
+        gray_image = cv2.cvtColor(cv2_image, cv2.COLOR_BGR2GRAY)  # Convert to grayscale
+        equalized_image = cv2.equalizeHist(gray_image)
+
+        # Convert back to color format (BGR)
+        equalized_image_bgr = cv2.cvtColor(equalized_image, cv2.COLOR_GRAY2BGR)
+
+        # Convert back to a PIL image
+        self.working_image = Image.fromarray(equalized_image_bgr)
+
+        # Display or use the `self.working_image` as needed
+        self.image_cropper.update_image(self.working_image)
+                
+    def detect_blobs_button_clicked(self):
+        if self.image_cropper.image:
+            # Get the current image from the app's canvas
+            image = self.image_cropper.image
+
+            # Call the function to detect blobs and retrieve the updated image and keypoints
+            updated_image, keypoints = self.detect_blobs(image)
+
+            if updated_image:
+                # Update the working image (if needed)
+                self.working_image = updated_image
+
+                # Display the updated image on the canvas
+                self.image_cropper.image = updated_image
+                self.image_cropper.update_image(updated_image)
+
+                # Store the keypoints for future reference (e.g., for blob removal)
+                self.keypoints = keypoints
+
+    def detect_blobs(self, image):
+        if image:
+            # Convert the PIL image to a NumPy array
+            self.image_before_blobs = image.copy()
+            image_np = np.array(image)
+
+            # Convert the NumPy array to grayscale
+            gray_image = cv2.cvtColor(image_np, cv2.COLOR_BGR2GRAY)
+
+            # Create two detectors, one for dark blobs and one for light blobs
+            params_dark = cv2.SimpleBlobDetector_Params()
+            params_light = cv2.SimpleBlobDetector_Params()
+
+            # Set the blob color for dark and light detectors
+            params_dark.blobColor = 0  # Detect dark blobs
+            params_light.blobColor = 255  # Detect light blobs
+
+            # Set other common parameters
+            params_dark.thresholdStep = 5
+            params_light.thresholdStep = 5
+
+            # Filter by circularity
+            params_dark.filterByCircularity = False
+            params_light.filterByCircularity = False
+            #params_dark.minCircularity = 0.6
+            #params_light.minCircularity = 0.6
+
+            # Filter by inertia
+            params_dark.filterByInertia = True
+            params_light.filterByInertia = True
+            params_dark.minInertiaRatio = 0.2
+            params_light.minInertiaRatio = 0.2
+
+            # Filter by area
+            params_dark.filterByArea = True
+            params_light.filterByArea = True
+            params_dark.minArea = 50.0  # Ensure min_area is a float
+            params_light.minArea = 50.0  # Ensure min_area is a float
+            params_dark.maxArea = 2000.0  # Ensure max_area is a float
+            params_light.maxArea = 2000.0  # Ensure max_area is a float
+
+            # Create the detectors
+            detector_dark = cv2.SimpleBlobDetector_create(params_dark)
+            detector_light = cv2.SimpleBlobDetector_create(params_light)
+
+            # Detect blobs using both detectors
+            keypoints_dark = detector_dark.detect(gray_image)
+            keypoints_light = detector_light.detect(gray_image)
+
+            # Combine the results
+            keypoints = keypoints_dark + keypoints_light
+
+            # Draw circles around the detected keypoints
+            result_image = cv2.drawKeypoints(image_np, keypoints, np.array([]), (0, 0, 255), cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+
+            # Convert the NumPy array back to a PIL image
+            updated_image = Image.fromarray(result_image)
+
+            return updated_image, keypoints
+        
+    def remove_blobs_button_clicked(self):
+        image = self.image_cropper.image
+        keypoints = self.keypoints
+        self.image_cropper.canvas.bind("<Button-1>", lambda event, img=image, kpts=list(keypoints): self.remove_blobs(event, img, kpts))
+
+        # Create a new Toplevel window for the "Finish Selection" button
+        finish_window = tk.Toplevel(self.root)
+
+        # Add a "Finish Selection" button to the new window
+        finish_button = tk.Button(finish_window, text="Finish Selection", command=self.finish_blob_selection)
+        finish_button.pack()
+
+        # Inform the user to click on the blobs to remove
+        print("Click on the blobs you want to remove")
+            
+    def remove_blobs(self, event, image, keypoints):
+        if image and keypoints:
+            # Corrected code to pass keypoints as a list
+            #self.start_blob_selection(event)
+            image = self.image_cropper.image
+            image.show()
+            #keypoints = list(self.keypoints)  # Pass the keypoints from the instance variable
+            #self.keypoints_to_remove = [] 
+
+            # Inform the user to click on the blobs to remove
+            print("Click on the blobs you want to remove.")
+           
+            print("# keypoints before", len(keypoints))
+            print("Detecting mouseclick")
+
+            # Determine the clicked coordinates
+
+            x, y = event.x, event.y
+
+            # Find the closest keypoint to the clicked coordinates
+            min_distance = float("inf")
+            closest_keypoint = None
+
+            for keypoint in keypoints:
+                # Calculate Euclidean distance between the clicked point and the keypoint
+                distance = np.sqrt((keypoint.pt[0] - x) ** 2 + (keypoint.pt[1] - y) ** 2)
+
+                if distance < min_distance:
+                    min_distance = distance
+                    closest_keypoint = keypoint
+
+            if closest_keypoint in keypoints:
+                print("removing point")
+                keypoints.remove(closest_keypoint)
+            else:
+                print("No point exists to remove")
+                
+            print("After", len(keypoints))
+
+            # Redraw the image with the updated keypoints and assign it back to updated_image
+            updated_image = self.draw_image_with_blobs(image, keypoints)
+
+            # Update the working image
+            self.working_image = updated_image
+            updated_image.show()
+
+            # Update the image on the canvas
+            self.image_cropper.image = self.working_image
+            self.image_cropper.update_image(self.working_image)
+                
+    def finish_blob_selection(self):
+        self.image_cropper.canvas.unbind("<Button-1>")
+
+    def draw_image_with_blobs(self, image, keypoints):
+        if image and keypoints:
+            print("Lengh of keypoints is ", len(keypoints))
+            # Copy the image to avoid modifying the original
+            self.working_image = image
+            
+            # Draw circles around the detected keypoints (excluding the removed ones)
+            image_np = np.array(self.working_image)
+            
+            result_image = cv2.drawKeypoints(image_np, keypoints, np.array([]), (0, 0, 255), cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+            
+            # Convert the NumPy array back to a PIL image
+            updated_image = Image.fromarray(result_image)
+            
+            # Display the updated image on the canvas
+            self.image_cropper.image = updated_image
+            self.image_cropper.update_image(updated_image)
+            
+            return updated_image
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    button_manager = ButtonManager(root)
+    image_cropper = ImageCropper(root, button_manager)
+    image_enhancer = ImageEnhancer(root, image_cropper, button_manager)
+    image_cropper.canvas.bind("<Button-1>", image_cropper.on_canvas_click)
+    image_cropper.canvas.bind("<B1-Motion>", image_cropper.on_canvas_drag)
+    root.mainloop()
